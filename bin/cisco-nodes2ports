@@ -1,0 +1,103 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+
+use Net::SNMP;
+use Data::Dumper;
+
+# ---
+
+my ($session, $error) = Net::SNMP->session(
+   -hostname  => 'gw',
+   -community => 'public@600',
+   -version   => 'v2c',
+   -port      =>  161 
+);
+
+if (!defined($session)) {
+   printf("ERROR: %s.\n", $error);
+   exit 1;
+}
+
+# mib pour Cisco
+# adresses mac :
+my $macTable = '.1.3.6.1.2.1.17.4.3.1.1';
+my $bridgeTable = '.1.3.6.1.2.1.17.4.3.1.2';
+my $portTable = '.1.3.6.1.2.1.17.1.4.1.2';
+my $ifNameTable = '.1.3.6.1.2.1.31.1.1.1.1';
+
+# ---- mac -----
+
+my %h1;
+
+print STDERR "(1/4) : fetching mac addresses\n";
+
+my ($result, $errorRes) = $session->get_table(
+   -baseoid => $macTable
+);
+
+foreach my $res (keys %{$result}) {
+	my $resd = $res;
+	$res =~ s/^\.1\.3\.6\.1\.2\.1\.17\.4\.3\.1\.1\.0\.//;
+	$h1{$res} = $result->{$resd};
+}
+
+# ---- bridge -----
+
+my %h2;
+
+print STDERR "(2/4) : fetching bridge information\n";
+
+($result, $errorRes) = $session->get_table(
+   -baseoid => $bridgeTable
+);
+
+foreach my $res (keys %{$result}) {
+	my $resd = $res;
+	$res =~ s/^\.1\.3\.6\.1\.2\.1\.17\.4\.3\.1\.2\.0\.//;
+	$h2{$res} = $result->{$resd};
+}
+
+# ---- ports ----
+
+my %h3;
+
+print STDERR "(3/4) : fetching ports information\n";
+
+($result, $errorRes) = $session->get_table(
+   -baseoid => $portTable
+);
+
+foreach my $res (keys %{$result}) {
+	my $resd = $res;
+	$res =~ s/^\.1\.3\.6\.1\.2\.1\.17\.1\.4\.1\.2\.//;
+	$h3{$res} = $result->{$resd};
+}
+
+# --- name ----
+
+my %h4;
+
+print STDERR "(4/4) : fetching ifNames information\n";
+
+($result, $errorRes) = $session->get_table(
+   -baseoid => $ifNameTable
+);
+
+foreach my $res (keys %{$result}) {
+	my $resd = $res;
+	$res =~ s/^\.1\.3\.6\.1\.2\.1\.31\.1\.1\.1\.1\.//;
+	$h4{$res} = $result->{$resd};
+}
+
+
+foreach my $id (keys %h1) {
+	if ($h1{$id} =~ m/0x(\S{4})(\S{4})(\S{4})/) {
+		my $mac = "$1.$2.$3";
+		next unless my $bridgeNum = $h2{$id};
+	 	next unless my $portNum = $h3{$bridgeNum};
+		next unless my $portName = $h4{$portNum};
+		print "$mac=$bridgeNum=$portNum=$portName\n";
+	}
+}

@@ -1,0 +1,4 @@
+cisco-nodes2ports :
+ - error handling
+ - command line options parsing
+ - how-to
