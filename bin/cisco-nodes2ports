@@ -1,103 +1,151 @@
 #!/usr/bin/perl
+#
+###
+#
+# project :	Links mac addresses to IP and DNS values (if resolvable)
+# created :	Fri Jun 19 22:45:50 CEST 2009 
+# author :	Florian Le Goff <Florian.Le_Goff@inria.fr>
+#
+###
 
 use strict;
 use warnings;
 
 use Net::SNMP;
+use Socket;
 use Data::Dumper;
 
-# ---
+# --- CONFIG
+
+my $switch = $ARGV[0] || 'gw';
+my $vlan = $ARGV[1] || '600';
+my $community = 'public';
+
+# uncomment for detailed output
+# my $verbose = 1;
+my $verbose;
+
+# --
 
 my ($session, $error) = Net::SNMP->session(
-   -hostname  => 'gw',
-   -community => 'public@600',
-   -version   => 'v2c',
-   -port      =>  161 
+   -hostname  =>	$switch,
+   -community =>	$community .'@'. $vlan,
+   -version   =>	'v2c',
+   -port      => 	161 
 );
+
+# --
 
 if (!defined($session)) {
    printf("ERROR: %s.\n", $error);
    exit 1;
 }
 
-# mib pour Cisco
-# adresses mac :
-my $macTable = '.1.3.6.1.2.1.17.4.3.1.1';
-my $bridgeTable = '.1.3.6.1.2.1.17.4.3.1.2';
-my $portTable = '.1.3.6.1.2.1.17.1.4.1.2';
-my $ifNameTable = '.1.3.6.1.2.1.31.1.1.1.1';
+# --
 
-# ---- mac -----
+sub buildHashFromOID($$$) {
+	my ($conf, $type, $hash) = @_;
+	
+	# erreur sur les args ?
+	return undef unless $conf and $type and $hash;
+
+	my ($result, $errorRes) = $session->get_table(
+	   -baseoid => $conf->{$type}->{'oid'}
+	);
+	
+	# erreur sur la requête snmp ?
+	return undef unless $result;
+
+	my $count = 0;
+
+	foreach my $res (keys %{$result}) {
+		my $resd = $res;
+		
+		$res =~ s/$conf->{$type}->{'reg'}//;
+		
+		if (defined $conf->{$type}->{'inv'}) {
+			$hash->{$result->{$resd}} = $res;
+		} else {
+			$hash->{$res} = $result->{$resd};
+		}
+		$count++;
+	}
+
+	return $count;
+}
+
+# --
+
+my $conf = {
+	'mac' => {
+		'oid' => '.1.3.6.1.2.1.17.4.3.1.1',
+		'reg' => '^\.1\.3\.6\.1\.2\.1\.17\.4\.3\.1\.1\.0\.' },
+	'bridge' => {
+		'oid' => '.1.3.6.1.2.1.17.4.3.1.2',
+		'reg' => '^\.1\.3\.6\.1\.2\.1\.17\.4\.3\.1\.2\.0\.' },
+	'port' => {
+		'oid' => '.1.3.6.1.2.1.17.1.4.1.2',
+		'reg' => '^\.1\.3\.6\.1\.2\.1\.17\.1\.4\.1\.2\.' },
+	'portName' => {
+		'oid' => '.1.3.6.1.2.1.31.1.1.1.1',
+		'reg' => '^\.1\.3\.6\.1\.2\.1\.31\.1\.1\.1\.1\.' },
+	'ipMac' => {
+		'oid' => '.1.3.6.1.2.1.4.22.1.2',
+		'reg' => '^\.1\.3\.6\.1\.2\.1\.4\.22\.1\.2\.\d+\.',
+		'inv' => 1 }
+	};
+	
+# --
 
 my %h1;
-
-print STDERR "(1/4) : fetching mac addresses\n";
-
-my ($result, $errorRes) = $session->get_table(
-   -baseoid => $macTable
-);
-
-foreach my $res (keys %{$result}) {
-	my $resd = $res;
-	$res =~ s/^\.1\.3\.6\.1\.2\.1\.17\.4\.3\.1\.1\.0\.//;
-	$h1{$res} = $result->{$resd};
-}
-
-# ---- bridge -----
+print STDERR "(1/5) : fetching mac addresses... ";
+print STDERR buildHashFromOID($conf, 'mac', \%h1). " entries\n";
 
 my %h2;
-
-print STDERR "(2/4) : fetching bridge information\n";
-
-($result, $errorRes) = $session->get_table(
-   -baseoid => $bridgeTable
-);
-
-foreach my $res (keys %{$result}) {
-	my $resd = $res;
-	$res =~ s/^\.1\.3\.6\.1\.2\.1\.17\.4\.3\.1\.2\.0\.//;
-	$h2{$res} = $result->{$resd};
-}
-
-# ---- ports ----
+print STDERR "(2/5) : fetching bridge information... ";
+print STDERR buildHashFromOID($conf, 'bridge', \%h2). " entries\n";
 
 my %h3;
-
-print STDERR "(3/4) : fetching ports information\n";
-
-($result, $errorRes) = $session->get_table(
-   -baseoid => $portTable
-);
-
-foreach my $res (keys %{$result}) {
-	my $resd = $res;
-	$res =~ s/^\.1\.3\.6\.1\.2\.1\.17\.1\.4\.1\.2\.//;
-	$h3{$res} = $result->{$resd};
-}
-
-# --- name ----
+print STDERR "(3/5) : fetching ports information... ";
+print STDERR buildHashFromOID($conf, 'port', \%h3). " entries\n";
 
 my %h4;
+print STDERR "(4/5) : fetching ifNames information... ";
+print STDERR buildHashFromOID($conf, 'portName', \%h4). " entries\n";
 
-print STDERR "(4/4) : fetching ifNames information\n";
+my %h5;
+print STDERR "(5/5) : fetching ip to mac information... ";
+print STDERR buildHashFromOID($conf, 'ipMac', \%h5). " entries\n";
 
-($result, $errorRes) = $session->get_table(
-   -baseoid => $ifNameTable
-);
-
-foreach my $res (keys %{$result}) {
-	my $resd = $res;
-	$res =~ s/^\.1\.3\.6\.1\.2\.1\.31\.1\.1\.1\.1\.//;
-	$h4{$res} = $result->{$resd};
-}
-
+# --
 
 foreach my $id (keys %h1) {
-	if ($h1{$id} =~ m/0x(\S{4})(\S{4})(\S{4})/) {
-		my $mac = "$1.$2.$3";
+	if ($h1{$id} =~ m/0x(\S{2})(\S{2})(\S{2})(\S{2})(\S{2})(\S{2})/) {
+		my $mac = "$1:$2:$3:$4:$5:$6";
 		next unless my $bridgeNum = $h2{$id};
 	 	next unless my $portNum = $h3{$bridgeNum};
 		next unless my $portName = $h4{$portNum};
-		print "$mac=$bridgeNum=$portNum=$portName\n";
+		next unless my $ip = $h5{$h1{$id}};
+		next unless my $iaddr = inet_aton($h5{$h1{$id}});
+		
+		# resolve 
+		my $name ;
+		$name = '' unless ($name = gethostbyaddr($iaddr, AF_INET));
+		
+		# affichage
+		if ( defined $verbose ) {
+			print "$mac,$portName,$ip,$name,";
+			if ($portName =~ m/^Gi(\d+)\/(\d+)$/) {
+				print $1.",".$2."\n";
+			} else {
+				print "\n";
+			}
+		} else {
+			if ($name) {
+				print "$name=$portName\n";
+			} else {
+				print "$ip=$portName\n";
+			}
+		}
 	}
 }
